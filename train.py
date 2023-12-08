@@ -59,8 +59,7 @@ def train(model, env_generator, true_env, device, tracker, M):
                     M.push(*opp_experience)
                 if t % 100 == 0:
                     tqdm.write(f"Epoch {epoch + 1}: {env} {action_counts}")
-                if t == 100:
-                    break
+
                 t += 1
                 state = next_state
 
