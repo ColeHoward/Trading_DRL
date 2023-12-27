@@ -81,6 +81,24 @@ class Attention(nn.Module):
         return self.wo(weighted_values)
 
 
+class AttentionPooling(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.query = nn.Parameter(torch.randn(dim))
+
+    def forward(self, x):
+        # x.shape is (batch_size, context_length, dim)
+
+        # Compute attention scores
+        attn_scores = torch.matmul(x, self.query)  # (batch_size, context_length)
+        attn_scores = F.softmax(attn_scores, dim=1)  # (batch_size, context_length)
+
+        # weighted sum
+        pooled_output = torch.sum(x * attn_scores.unsqueeze(-1), dim=1)  # (batch_size, dim)
+
+        return pooled_output
+
+
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -140,6 +158,7 @@ class TDTransformer(nn.Module):
 
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.freqs_cis = precompute_freqs_cis(args.head_dim, args.context_length).to(args.device)
+        self.attention_pool = AttentionPooling(args.dim)
         self.output = nn.Linear(args.dim, args.action_dim)
 
     def forward(self, state) -> torch.Tensor:
@@ -152,17 +171,36 @@ class TDTransformer(nn.Module):
         for layer in self.layers:
             h = layer(h, freqs_cis=self.freqs_cis)
 
-        h = self.norm(h)
-        h = h[:, -1, :]
+        h = self.attention_pool(self.norm(h))
 
         # return action values
         return self.output(h)
+
+
+class GRUModel(nn.Module):
+    def __init__(self, n_features, n_hidden, n_actions):
+        super(GRUModel, self).__init__()
+        self.gru = nn.GRU(input_size=n_features, hidden_size=n_hidden, batch_first=True, num_layers=2)
+        self.fc = nn.Linear(n_hidden, n_actions)
+        self.attention_pool = AttentionPooling(n_hidden)
+
+    def forward(self, x):
+        # x shape: (batch_size, context_length, n_features)
+        output, _ = self.gru(x)
+
+        last_output = self.attention_pool(output)
+
+        out = self.fc(last_output)
+
+        return out
 
 
 
 class TransformerDQN(nn.Module):
     def __init__(self, args: TDTransformerArgs):
         super().__init__()
+        # self.policy = GRUModel(args.num_features, args.dim, args.action_dim)
+        # self.tgt = GRUModel(args.num_features, args.dim, args.action_dim)
         self.policy = TDTransformer(args)
         self.tgt = TDTransformer(args)
         self.tgt.load_state_dict(self.policy.state_dict())
@@ -189,8 +227,7 @@ class TransformerDQN(nn.Module):
         torch.save(self.tgt.state_dict(), path + '_tgt')
 
     def load_models(self, path) -> None:
-        self.policy.load_state_dict(torch.load(path + '_policy'))
-        self.tgt.load_state_dict(torch.load(path + '_tgt'))
+        self.policy.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
         self.policy.eval()
 
     def train_mode(self) -> None:
