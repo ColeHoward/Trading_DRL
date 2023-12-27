@@ -87,7 +87,7 @@ class AttentionPooling(nn.Module):
         self.query = nn.Parameter(torch.randn(dim))
 
     def forward(self, x):
-        # x.shape is (batch_size, context_length, dim)
+        # x.shape: (batch_size, context_length, dim)
 
         # Compute attention scores
         attn_scores = torch.matmul(x, self.query)  # (batch_size, context_length)
